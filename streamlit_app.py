@@ -18,26 +18,33 @@ if uploaded_file is not None:
         st.write('**Raw data**')
         st.write(df)
         
-        if 'species' in df.columns:
-            st.write('**X**')
-            X_raw = df.drop('species', axis=1)
-            st.write(X_raw)
-
-            st.write('**y**')
-            y_raw = df['species']
-            st.write(y_raw)
+        # Separate features and target if possible
+        st.write('**Feature and Target Selection**')
+        all_columns = df.columns.tolist()
+        target_column = st.selectbox('Select the target column (if any)', ['None'] + all_columns)
+        
+        if target_column != 'None':
+            X_raw = df.drop(target_column, axis=1)
+            y_raw = df[target_column]
         else:
-            st.error("The uploaded file must contain a 'species' column.")
-            st.stop()
+            X_raw = df
+            y_raw = pd.Series([None] * df.shape[0], name='target')
+
+        st.write('**Features (X)**')
+        st.write(X_raw)
+
+        if target_column != 'None':
+            st.write('**Target (y)**')
+            st.write(y_raw)
 
     with st.expander('Data visualization'):
         st.write('**Scatter Plot**')
-        numerical_cols = df.select_dtypes(include=np.number).columns.tolist()
+        numerical_cols = X_raw.select_dtypes(include=np.number).columns.tolist()
         if len(numerical_cols) >= 2:
             x_axis = st.selectbox('Select X-axis for scatter plot', numerical_cols)
             y_axis = st.selectbox('Select Y-axis for scatter plot', numerical_cols)
             if x_axis != y_axis:
-                st.scatter_chart(data=df, x=x_axis, y=y_axis, color='species')
+                st.scatter_chart(data=df, x=x_axis, y=y_axis)
             else:
                 st.warning("X-axis and Y-axis must be different for the scatter plot.")
         else:
@@ -59,45 +66,58 @@ if uploaded_file is not None:
         
         # Create a DataFrame for the input features
         input_df = pd.DataFrame([input_data])
-        input_penguins = pd.concat([input_df, X_raw], axis=0)
+        input_data_with_df = pd.concat([input_df, X_raw], axis=0)
 
     with st.expander('Input features'):
         st.write('**Input data**')
         st.write(input_df)
         st.write('**Combined data**')
-        st.write(input_penguins)
+        st.write(input_data_with_df)
 
     # Data preparation
     # Encode categorical features
-    df_penguins = pd.get_dummies(input_penguins)
+    df_encoded = pd.get_dummies(input_data_with_df)
 
-    X = df_penguins[1:]
-    input_row = df_penguins[:1]
+    X = df_encoded[1:]
+    input_row = df_encoded[:1]
 
-    # Encode y (target variable)
-    target_mapper = {species: idx for idx, species in enumerate(y_raw.unique())}
-    y = y_raw.map(target_mapper)
+    if target_column != 'None':
+        # Encode y (target variable) if it's not None
+        if pd.api.types.is_numeric_dtype(y_raw):
+            y = y_raw
+        else:
+            target_mapper = {val: idx for idx, val in enumerate(y_raw.unique())}
+            y = y_raw.map(target_mapper)
+    else:
+        y = pd.Series([None] * df.shape[0])
 
     with st.expander('Data preparation'):
         st.write('**Encoded X (input data)**')
         st.write(input_row)
-        st.write('**Encoded y**')
-        st.write(y)
+        if target_column != 'None':
+            st.write('**Encoded y**')
+            st.write(y)
 
     # Model training and inference
-    clf = RandomForestClassifier()
-    clf.fit(X, y)
+    if target_column != 'None' and y.notnull().all():
+        clf = RandomForestClassifier()
+        clf.fit(X, y)
 
-    prediction = clf.predict(input_row)
-    prediction_proba = clf.predict_proba(input_row)
+        prediction = clf.predict(input_row)
+        prediction_proba = clf.predict_proba(input_row)
 
-    df_prediction_proba = pd.DataFrame(prediction_proba, columns=target_mapper.keys())
+        df_prediction_proba = pd.DataFrame(prediction_proba, columns=target_mapper.keys() if not pd.api.types.is_numeric_dtype(y_raw) else y_raw.unique())
 
-    # Display predicted species
-    st.subheader('Predicted Species')
-    st.dataframe(df_prediction_proba, hide_index=True)
-    predicted_species = list(target_mapper.keys())[list(target_mapper.values()).index(prediction[0])]
-    st.success(predicted_species)
+        # Display predicted species
+        st.subheader('Predicted Target')
+        st.dataframe(df_prediction_proba, hide_index=True)
+        if not pd.api.types.is_numeric_dtype(y_raw):
+            predicted_label = list(target_mapper.keys())[list(target_mapper.values()).index(prediction[0])]
+        else:
+            predicted_label = prediction[0]
+        st.success(f"Predicted: {predicted_label}")
+    else:
+        st.warning("No target column selected or target column is not properly defined.")
 
 else:
     st.write("Please upload a CSV file to proceed.")
